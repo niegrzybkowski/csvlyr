@@ -1,0 +1,13 @@
+cradle:
+  stack:
+    - path: "./src"
+      component: "csvlyr:lib"
+
+    - path: "./app/Main.hs"
+      component: "csvlyr:exe:csvlyr-exe"
+
+    - path: "./app/Paths_csvlyr.hs"
+      component: "csvlyr:exe:csvlyr-exe"
+
+    - path: "./test"
+      component: "csvlyr:test:csvlyr-test"
