@@ -1,4 +1,47 @@
-module Language where
+{-|
+Module      : Language
+Description : CSVlyr language parsing module
+Copyright   : (c) Kacper Grzymkowski, 2022
+Stability   : experimental
+Portability : POSIX
+
+This module contains parsers for the CSVlyr transformation language.
+This language allows for easy transformation of tabular CSV files, such as the well-known iris dataset.
+Example script:
+
+@
+
+filter(Species == \'setosa\') |>
+select(Species, Petal.Length, Petal.Width) |>
+mutate(
+    Species.Pigish = Species ++ \'y\',
+    Petal.Area = Petal.Length*Petal.Width 
+) |>
+filter( 
+    Petal.Area >= 2.0e-1
+)
+
+@
+-}
+
+module Language (
+    Transform(..),
+    Recipe,
+    ColumnSelector,
+    MapRow,
+    parseRecipe,
+    recipe,
+    transform,
+    columnSelector,
+    column,
+    predicates,
+    stringPredicate,
+    numericPredicate,
+    mutations,
+    stringMutation,
+    numericMutation,
+    specialChars
+    ) where
 
 import Data.Void ( Void )
 import Text.Megaparsec
@@ -16,12 +59,14 @@ import qualified Data.Set as Set
 import Control.Monad.Trans.State.Strict ( StateT )
 import Control.Monad.Trans.Class (lift)
 
-data Transform = Id
-    | Select ColumnSelector
-    | Deselect ColumnSelector
-    | Head Int
-    | Filter (MapRow String -> Bool)
-    | Mutate (MapRow String -> MapRow String)
+
+-- | Data definition describing supported data transforms.
+data Transform = Id                           -- ^ Identity transform.
+    | Select ColumnSelector                   -- ^ Subset of columns.
+    | Deselect ColumnSelector                 -- ^ Column negative subset.
+    | Head Int                                -- ^ Row subset of first n elements.
+    | Filter (MapRow String -> Bool)          -- ^ Subset of rows by a predicate, the row is retained when the predicate is true.
+    | Mutate (MapRow String -> MapRow String) -- ^ Creation or replacement of a column using the contained function.
 
 instance Show Transform where
     show Id = "Id()"
@@ -31,21 +76,28 @@ instance Show Transform where
     show (Filter _) = "Filter(<???>)"
     show (Mutate _) = "Mutate(<???>)"
 
+-- | A 'Recipe' is a list of transforms to run in sequence.
 type Recipe = [Transform]
+
+-- | A 'ColumnSelector' is a list of column names separated by commas.
 type ColumnSelector = [String]
 type Parser = Parsec Void String
-type KnownColumnParser = StateT (Set.Set String) Parser
 
-type CSVRow = MapRow String
-
+-- | Primary parser entrypoint. Parses a 'String' and returns a compiled 'Recipe' or a pretty-printed error message
+-- Language grammar is a series of transforms separated by the pipe symbol \'|>\'.
+-- Transforms are in C-like format of @transformName(transformParameters)@.
 parseRecipe :: String -> Either String Recipe
 parseRecipe s = case (runParser (recipe <* eof) "" s) of
   Left err -> Left $ errorBundlePretty err
   Right fine -> Right fine
 
+-- | Parser for 'Recipe', a list of transforms separated by the pipe symbol \'|>\'. (see 'transform')
 recipe :: Parser Recipe
 recipe = sepBy transform (symbol "|>")
 
+-- | Parser for 'Transform', in C-like format of @transformName(transformParameters)@.
+-- For individual transforms see:
+-- * column
 transform :: Parser Transform
 transform = choice [
         Id       <$  (symbol "id"       >> symbol "(" >> symbol ")"),
@@ -56,22 +108,36 @@ transform = choice [
         Mutate   <$> (symbol "mutate"   *> parens mutations)
     ] <?> "transform"
 
+-- | List of special characters used in the language, which are not allowed in non-escaped scenarios.
 specialChars :: [Char]
 specialChars = " ,()|+-*/='\"`"
 
 quotedColumn :: Parser String
 quotedColumn = between (symbol "`") (symbol "`") (lexeme $ some (noneOf "`"))
 
+-- | Columns can be selected by their name without any quoting if the name doesn't contain special characters (see 'specialChars').
+-- Columns may also be selected by quoting them with the backtick character '`'.
 column :: Parser String
 column = lexeme (some (noneOf specialChars)) <|> quotedColumn <?> "columnName"
 
+-- | Parser for 'ColumnSelector', a list of column names separated by commas (see 'column').
+-- For example, on the iris dataset: @select(Species, Sepal.Length, \`Sepal.Width\`)@ will subset the three columns.
 columnSelector :: Parser [String]
 columnSelector = sepBy column (symbol ",")
 
+-- | Predicates of type either string or numeric allow for subsetting rows.
+-- Multiple predicates may be provided, separated by a comma ',', in which case they will be evaluated with a logical AND.
+-- Predicate is in the general format of @/expression operator expression/@.
+-- For example, on the iris dataset: @ filter(Species == \'setosa\', Sepal.Length >= 2.0) @ 
+-- will select only observations of species setosa and with a sepal length of at least 2.
 predicates :: Parser (MapRow String -> Bool)
 predicates = sepBy (try stringPredicate <|> try numericPredicate) (symbol ",") >>=
     \listOfPredicates -> pure (\row -> and $ listOfPredicates <*> [row])
 
+-- | Predicate of type 'String' allowing concatenation expressions '++', 
+-- string literals quoted in single quotes \',
+-- quoted or unqouted columns (see 'column') ,
+-- and equality operations ('==', '!=')
 stringPredicate :: Parser (MapRow String -> Bool)
 stringPredicate = do
     lhs <- stringExpr
@@ -82,6 +148,11 @@ stringPredicate = do
     rhs <- stringExpr
     pure (\row -> lhs row `op` rhs row)
 
+-- | Predicate of type 'Double' allowing 
+-- basic arithmetic expressions ('+','-','*','/'), 
+-- numeric literals (e.g. 2, 2.0, 1.3e3),
+-- quoted or unqouted columns (see 'column') ,
+-- and comparison operations (e.g. '==', '<', '!=')
 numericPredicate :: Parser (MapRow String -> Bool)
 numericPredicate = do
     lhs <- numericExpr
@@ -96,10 +167,18 @@ numericPredicate = do
     rhs <- numericExpr
     pure (\row -> lhs row `op` rhs row)
 
+-- | Mutations allow creating new columns and replacing existing ones. They are either of 'String' or 'Double' type.
+-- Mutations have the general format of @mutate(/columnName/ = /expression/)@.
+-- For example: @mutate(Petal.Area = Petal.Length * Petal.Width * 0.5)@ will create a new column named @Petal.Length@, 
+-- which is equal to half of @Petal.Length * Petal.Width@ for all observations.
 mutations :: Parser (MapRow String -> MapRow String)
 mutations = sepBy (try numericMutation <|> try stringMutation) (symbol ",") >>=
     \listOfMutations -> pure (foldl (.) id listOfMutations)
 
+-- | Mutation of type 'String' allowing 
+-- concatenation expressions ('++'),
+-- quoted or unqouted columns (see 'column') 
+-- and string literals (quoted with \').
 stringMutation :: Parser (MapRow String -> MapRow String)
 stringMutation = (do
     targetColumn <- column
@@ -107,6 +186,10 @@ stringMutation = (do
     rhs <- stringExpr
     pure (\row -> M.insert targetColumn (rhs row) row)) <?> "string mutation"
 
+-- | Predicate of type 'Double' allowing 
+-- basic arithmetic expressions ('+','-','*','/'), 
+-- numeric literals (e.g. 2, 2.0, 1.3e3),
+-- and quoted or unqouted columns (see 'column').
 numericMutation :: Parser (MapRow String -> MapRow String)
 numericMutation = do
     lhs <- column

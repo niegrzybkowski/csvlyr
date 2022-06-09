@@ -5,5 +5,4 @@ filter (
 mutate(
     dist = norm*unif+0.5
 ) |>
-select(n, dist) |>
-head(1000)
+select(n, dist)
