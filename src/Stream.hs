@@ -41,7 +41,6 @@ compileTransform (L.Select cs) header = do
 
 compileTransform (L.Head num) header = pure (header, takeC num)
 
-compileTransform (L.Drop num) header = pure (header, dropC num)
 
 compileTransform _ _ = Nothing
 
@@ -79,3 +78,17 @@ runTest =
         extractCompiledRecipe (recipeTest) .|
         sinkList
         ) >>= print  
+
+{-
+
+let testTransform = "select(a, c) |> head(3)"
+let Right parsedRecipe = parseRecipe testTransform 
+
+let header = V.fromList ["a", "b", "c"]
+let records = [V.fromList [show c, "text",(show c) ++ ".1"] | c <- [1..10]]
+
+runConduit (yieldMany records  .| extractCompiledRecipe (compileRecipe parsedRecipe header) .| sinkList )
+
+
+runResourceT $ transformCSV defCSVSettings (sourceFile "test_data/iris.csv") myProcessor (sinkFile "output.csv")
+-}

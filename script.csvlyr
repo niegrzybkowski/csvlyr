@@ -1,0 +1,9 @@
+filter(Species == 'setosa') |>
+select(Species, Petal.Length, Petal.Width) |>
+mutate(
+    Species.Pigish = Species ++ 'y',
+    Petal.Area = Petal.Length*Petal.Width 
+) |>
+filter( 
+    Petal.Area >= 2.0e-1
+)

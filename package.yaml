@@ -31,6 +31,9 @@ library:
     - containers
     - transformers
     - vector
+    - csv-conduit
+    - parser-combinators
+    - cmdargs 
 
 executables:
   csvlyr-exe:
@@ -48,7 +51,9 @@ executables:
     - containers
     - transformers
     - vector
-
+    - csv-conduit
+    - parser-combinators 
+    - cmdargs
 
 tests:
   csvlyr-test:

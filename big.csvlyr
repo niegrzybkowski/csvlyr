@@ -1,0 +1,9 @@
+filter (
+    alphabet == 'b',
+    norm >= 0.5
+) |>
+mutate(
+    dist = norm*unif+0.5
+) |>
+select(n, dist) |>
+head(1000)
